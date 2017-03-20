@@ -3,7 +3,7 @@
  * NOTE that UART 3 is used in this example.
  * See the pinout diagram for info as to where UART3 is.
 */
-
+//test
 
 #include "chip.h"
 #include "board.h"
