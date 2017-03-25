@@ -3,7 +3,7 @@
  * NOTE that UART 3 is used in this example.
  * See the pinout diagram for info as to where UART3 is.
 */
-
+//test
 
 #include "chip.h"
 #include "board.h"
@@ -55,7 +55,7 @@ void HANDLER_NAME(void)
 
 	/* Use default ring buffer handler. Override this with your own
 	   code if you need more capability. */
-	Chip_UART_IRQRBHandler(UART_SELECTION, &rxring, &txring);
+	//Chip_UART_IRQRBHandler(UART_SELECTION, &rxring, &txring);
 }
 
 int main(void) {
