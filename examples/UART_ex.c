@@ -55,7 +55,7 @@ void HANDLER_NAME(void)
 
 	/* Use default ring buffer handler. Override this with your own
 	   code if you need more capability. */
-	Chip_UART_IRQRBHandler(UART_SELECTION, &rxring, &txring);
+	//Chip_UART_IRQRBHandler(UART_SELECTION, &rxring, &txring);
 }
 
 int main(void) {
