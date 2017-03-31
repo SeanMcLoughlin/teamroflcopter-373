@@ -32,7 +32,7 @@
 #include "board.h"
 #include "string.h"
 
-#include "retarget.h"
+#include "retarget.h" // Comment this out if you want to printf to the console as opposed to UART
 
 /*****************************************************************************
  * Private types/enumerations/variables
