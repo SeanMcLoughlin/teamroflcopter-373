@@ -7,6 +7,7 @@
 #include "board.h"
 #include "string.h"
 #include <stdio.h>
+#include <assert.h>
 
 
 // Select UART Handlers
@@ -14,27 +15,23 @@
 #define IRQ_SELECTION 		UART3_IRQn
 #define HANDLER_NAME 		UART3_IRQHandler
 
-/* Receive buffer for the UART signals */
-/* Contains all the signals for ADC */
-STATIC RINGBUFF_T rxring;
 
 #define UART_RRB_SIZE 	0x18 				// Depends on sampling rate. Don't want it to overflow
-#define RIGHT_HAND_ADDR	0x0013A200415AEC15	// The address of the right hand xbee (These DO NOT change with XBEE settings!)
-#define LEFT_HAND_ADDR 	0x0013A20040AE5BE4	// The address of the left hand xbee
+#define RIGHT_HAND_ADDR	0x415AEC15			// The LOWER address of the right hand xbee (These DO NOT change with XBEE settings!)
+#define LEFT_HAND_ADDR 	0x40AE5BE4			// The LOWER address of the left hand xbee
 #define ADDR_START_IDX	4					// The index of the start of the address in the XBEE packet
 
 #define DAC_ADDRESS_0 0x62
 #define DAC_ADDRESS_1 0x63
 #define SPEED_100KHZ  1000000
 
-/* Receive buffer */
-static uint8_t rxbuff[UART_RRB_SIZE];
-
 /* axes for i2c transfer */
 static uint8_t x_axis[2], y_axis[2];
 
 // Used for i2c
 static int mode_poll;
+static uint8_t iox_data[2]; /* PORT0 input port, PORT1 Output port */
+
 
 enum adcsample_t	{X_AXIS = 0, Y_AXIS = 1};
 
@@ -54,11 +51,11 @@ uint16_t byteConcat(uint8_t byte1, uint8_t byte2) {
  * 	@brief	Given the data packet, find the xbee address
  * 	@return	the XBEE address
  */
-uint64_t xbeeAddress(uint8_t* data) {
+uint32_t xbeeAddress(uint8_t* data) {
 
 	uint64_t address = 0;
 	int i;
-	for (i = ADDR_START_IDX; i < ADDR_START_IDX + 8; i++) {
+	for (i = 0; i < 4; i++) {
 		address = (address << 8) | data[i];
 	}
 
@@ -68,14 +65,14 @@ uint64_t xbeeAddress(uint8_t* data) {
 void getADCSample(uint8_t* data, uint8_t sample) {
 	switch (sample) {
 		case X_AXIS:
-			// 5 and 4 because the X axis is the first of two ADC samples
-			x_axis[0] = data[UART_RRB_SIZE-5];
-			x_axis[1] = data[UART_RRB_SIZE-4];
+			// X is the first sample, 3 and 4 indices
+			x_axis[0] = data[3];
+			x_axis[1] = data[4];
 			break;
 		case Y_AXIS:
-			// 3 and 2 because the Y axis is the second of the two ADC samples
-			y_axis[0] = data[UART_RRB_SIZE-3];
-			y_axis[1] = data[UART_RRB_SIZE-2];
+			// Y is the second sample, 5 and 6 indices
+			y_axis[0] = data[5];
+			y_axis[1] = data[6];
 			break;
 	}
 
@@ -85,6 +82,17 @@ void getADCSample(uint8_t* data, uint8_t sample) {
 uint8_t validAddress(uint8_t* data) {
 	return xbeeAddress(data) == RIGHT_HAND_ADDR || xbeeAddress(data) == LEFT_HAND_ADDR;
 }
+
+/* State machine handler for I2C0 and I2C1 */
+static void i2c_state_handling(I2C_ID_T id)
+{
+	if (Chip_I2C_IsMasterActive(id)) {
+		Chip_I2C_MasterStateHandler(id);
+	} else {
+		Chip_I2C_SlaveStateHandler(id);
+	}
+}
+
 
 
 /* Set I2C mode to polling/interrupt */
@@ -114,6 +122,21 @@ static void i2c_app_init(I2C_ID_T id, int speed)
 	i2c_set_mode(id, 0);
 }
 
+/* Update IN/OUT port states to real devices */
+void i2c_iox_update_regs(int ops)
+{
+	if (ops & 1) { /* update out port */
+		Board_LED_Set(0, iox_data[1] & 1);
+		Board_LED_Set(1, iox_data[1] & 2);
+		Board_LED_Set(2, iox_data[1] & 4);
+		Board_LED_Set(3, iox_data[1] & 8);
+	}
+
+	if (ops & 2) { /* update in port */
+		iox_data[0] = (uint8_t) Buttons_GetStatus();
+	}
+}
+
 /*
  * INTERRUPT HANDLERS
  */
@@ -122,8 +145,66 @@ static void i2c_app_init(I2C_ID_T id, int speed)
  * @brief	UART 3 interrupt handler using ring buffers for only read ring buffers
  * @return	Nothing
  */
+uint8_t UART_INT_COUNT = 0;
+uint8_t UART_BYTES;
+uint8_t data1[8];
+uint8_t data2[8];
+uint8_t data3[8];
 void HANDLER_NAME(void) {
-	Chip_UART_RXIntHandlerRB(UART_SELECTION, &rxring);
+
+	int i = 0;
+
+	switch (UART_INT_COUNT) {
+		case (0):
+			while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
+				data1[i++] = Chip_UART_ReadByte(UART_SELECTION);
+				if (i == 8) break; // For safety
+			}
+			UART_INT_COUNT++;
+			break;
+		case (1):
+			while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
+				data2[i++] = Chip_UART_ReadByte(UART_SELECTION);
+				if (i == 8) break;
+			}
+			UART_INT_COUNT++;
+			break;
+		case (2):
+			while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
+				data3[i++] = Chip_UART_ReadByte(UART_SELECTION);
+				if (i == 8) break;
+			}
+			UART_INT_COUNT = 0;
+			break;
+	}
+}
+
+/**
+ * @brief	SysTick Interrupt Handler
+ * @return	Nothing
+ * @note	Systick interrupt handler updates the button status
+ */
+void SysTick_Handler(void)
+{
+	i2c_iox_update_regs(2);
+}
+
+/**
+ * @brief	I2C Interrupt Handler
+ * @return	None
+ */
+void I2C1_IRQHandler(void)
+{
+	i2c_state_handling(I2C1);
+}
+
+/**
+ * @brief	I2C0 Interrupt handler
+ * @return	None
+ */
+void I2C0_IRQHandler(void)
+{
+	i2c_state_handling(I2C0);
 }
 
 
@@ -137,9 +218,6 @@ void HANDLER_NAME(void) {
 int main(void)
 {
 
-	/* things to read the UART Ring buffer */
-	uint8_t data[UART_RRB_SIZE];
-
 	SystemCoreClockUpdate();
 	Board_Init();
 	Board_UART_Init(UART_SELECTION);
@@ -149,12 +227,9 @@ int main(void)
 	Chip_UART_Init(UART_SELECTION);
 	Chip_UART_SetBaud(UART_SELECTION, 9600);
 	Chip_UART_ConfigData(UART_SELECTION, (UART_LCR_WLEN8 | UART_LCR_SBS_1BIT));
-	Chip_UART_SetupFIFOS(UART_SELECTION, (UART_FCR_FIFO_EN | UART_FCR_TRG_LEV3)); // TODO: The trigger level is the problem. We need UART to trigger after it reads the WHOLE packet. Otherwise it won't get the ADC samples or the whole address
+	Chip_UART_SetupFIFOS(UART_SELECTION, (UART_FCR_FIFO_EN | UART_FCR_TRG_LEV1));
 
-	/* Init the read ring buffer */
-	RingBuffer_Init(&rxring, rxbuff, 1, UART_RRB_SIZE);
-
-	/* Enable ring buffer UART 3 interrupt */
+	/* Enable UART 3 interrupt */
 	Chip_UART_IntEnable(UART_SELECTION, (UART_IER_RBRINT | UART_IER_RLSINT));
 
 	/* preemption = 1, sub-priority = 1 */
@@ -162,33 +237,32 @@ int main(void)
 	NVIC_EnableIRQ(IRQ_SELECTION);
 
 	/* I2C Init */
-	i2c_app_init(I2C2, SPEED_100KHZ);
 	i2c_app_init(I2C1, SPEED_100KHZ);
+	i2c_app_init(I2C0, SPEED_100KHZ);
 
 	while(1) {
 
-		int bytes; // Used for return values of serial comm functions
-
-		// TODO: bytes is always 8 and I'm only reading 8 bytes correctly
-		bytes = Chip_UART_ReadRB(UART_SELECTION, &rxring, &data, sizeof(data)-1);
-
 		// First word is always 0x7E00, next is the size of packet, next is 0x82 (for some reason)
-		if (bytes > 0 && byteConcat(data[0], data[1]) == 0x7E00 && byteConcat(data[2], data[3]) == 0x1482 /*&& validAddress(data)*/) {
+		if (data1[0] == 0x7E && data1[1] == 0x00 && data1[2] == 0x14 && data1[3] == 0x82) {
+
 
 			// Get the ADC samples
-			getADCSample(data, X_AXIS);
-			getADCSample(data, Y_AXIS);
+			getADCSample(data3, X_AXIS);
+			getADCSample(data3, Y_AXIS);
 
 			// Output samples on I2C for the right accelerometer
-			if (xbeeAddress(data) == RIGHT_HAND_ADDR) {
-				bytes = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
-				bytes = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
+			if (xbeeAddress(data2) == RIGHT_HAND_ADDR) {
+				Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
+				int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
+				tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
 			}
 
 			// Output samples on I2C for the left accelerometer
-			else if (xbeeAddress(data) == LEFT_HAND_ADDR) {
-				bytes = Chip_I2C_MasterSend(I2C2, DAC_ADDRESS_0, x_axis, 2);
-				bytes = Chip_I2C_MasterSend(I2C2, DAC_ADDRESS_1, y_axis, 2);
+			// TODO: I2C1 is not working. Only I2C0
+			else if (xbeeAddress(data2) == LEFT_HAND_ADDR) {
+				Chip_I2C_SetMasterEventHandler(I2C0, Chip_I2C_EventHandler);
+				int tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
+				tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
 			}
 
 		}
@@ -198,3 +272,8 @@ int main(void)
 
 	return 1;
 }
+
+// Questions:
+// 1. Are interrupts ever occurring when you're in the ISR?
+// 2. How long is the ISR actually taking?
+// 3. Try to read out a shorter sequence each time (4 bytes) ... but probably not the problem
