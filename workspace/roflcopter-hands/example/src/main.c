@@ -55,7 +55,7 @@ uint32_t xbeeAddress(uint8_t* data) {
 
 	uint64_t address = 0;
 	int i;
-	for (i = 0; i < 4; i++) {
+	for (i = 8; i < 12; i++) {
 		address = (address << 8) | data[i];
 	}
 
@@ -66,13 +66,13 @@ void getADCSample(uint8_t* data, uint8_t sample) {
 	switch (sample) {
 		case X_AXIS:
 			// X is the first sample, 3 and 4 indices
-			x_axis[0] = data[3];
-			x_axis[1] = data[4];
+			x_axis[0] = data[19];
+			x_axis[1] = data[20];
 			break;
 		case Y_AXIS:
 			// Y is the second sample, 5 and 6 indices
-			y_axis[0] = data[5];
-			y_axis[1] = data[6];
+			y_axis[0] = data[21];
+			y_axis[1] = data[22];
 			break;
 	}
 
@@ -149,34 +149,15 @@ uint8_t UART_INT_COUNT = 0;
 uint8_t UART_BYTES;
 uint8_t data[24];
 void HANDLER_NAME(void) {
-int i = 0;
-
-
-	switch (UART_INT_COUNT) {
-		case (0):
-			i = 0;
-			while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
-				data[i++] = Chip_UART_ReadByte(UART_SELECTION);
-				if (i == 8) break; // For safety
-			}
-			UART_INT_COUNT++;
-			break;
-		case (1):
-			i = 8;
-			while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
-				data[i++] = Chip_UART_ReadByte(UART_SELECTION);
-				if (i == 16) break;
-			}
-			UART_INT_COUNT++;
-			break;
-		case (2):
-			i = 16;
-			while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
-				data[i++] = Chip_UART_ReadByte(UART_SELECTION);
-				if (i == 24) break;
-			}
-			UART_INT_COUNT = 0;
-			break;
+	int i;
+	for(i = 0; i < 16; i++)
+	{
+		data[i] = data[i+8];
+	}
+	i = 16;
+	while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
+		data[i++] = Chip_UART_ReadByte(UART_SELECTION);
+		if (i == 24) break; // For safety
 	}
 }
 
@@ -228,18 +209,19 @@ int main(void)
 	Chip_UART_Init(UART_SELECTION);
 	Chip_UART_SetBaud(UART_SELECTION, 9600);
 	Chip_UART_ConfigData(UART_SELECTION, (UART_LCR_WLEN8 | UART_LCR_SBS_1BIT));
-	Chip_UART_SetupFIFOS(UART_SELECTION, (UART_FCR_FIFO_EN | UART_FCR_TRG_LEV0));
+	Chip_UART_SetupFIFOS(UART_SELECTION, (UART_FCR_FIFO_EN | UART_FCR_TRG_LEV2));
 
 	/* Enable UART 3 interrupt */
 	Chip_UART_IntEnable(UART_SELECTION, (UART_IER_RBRINT | UART_IER_RLSINT));
+
+	/* I2C Init */
+	i2c_app_init(I2C1, SPEED_100KHZ);
+	i2c_app_init(I2C0, SPEED_100KHZ);
 
 	/* preemption = 1, sub-priority = 1 */
 	NVIC_SetPriority(IRQ_SELECTION, 1);
 	NVIC_EnableIRQ(IRQ_SELECTION);
 
-	/* I2C Init */
-	i2c_app_init(I2C1, SPEED_100KHZ);
-	i2c_app_init(I2C0, SPEED_100KHZ);
 
 	while(1) {
 		// First word is always 0x7E00, next is the size of packet, next is 0x82 (for some reason)
@@ -268,9 +250,6 @@ int main(void)
 
 		}
 	}
-
-
-
 	return 1;
 }
 
