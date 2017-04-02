@@ -147,32 +147,33 @@ void i2c_iox_update_regs(int ops)
  */
 uint8_t UART_INT_COUNT = 0;
 uint8_t UART_BYTES;
-uint8_t data1[8];
-uint8_t data2[8];
-uint8_t data3[8];
+uint8_t data[24];
 void HANDLER_NAME(void) {
+int i = 0;
 
-	int i = 0;
 
 	switch (UART_INT_COUNT) {
 		case (0):
+			i = 0;
 			while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
-				data1[i++] = Chip_UART_ReadByte(UART_SELECTION);
+				data[i++] = Chip_UART_ReadByte(UART_SELECTION);
 				if (i == 8) break; // For safety
 			}
 			UART_INT_COUNT++;
 			break;
 		case (1):
+			i = 8;
 			while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
-				data2[i++] = Chip_UART_ReadByte(UART_SELECTION);
-				if (i == 8) break;
+				data[i++] = Chip_UART_ReadByte(UART_SELECTION);
+				if (i == 16) break;
 			}
 			UART_INT_COUNT++;
 			break;
 		case (2):
+			i = 16;
 			while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
-				data3[i++] = Chip_UART_ReadByte(UART_SELECTION);
-				if (i == 8) break;
+				data[i++] = Chip_UART_ReadByte(UART_SELECTION);
+				if (i == 24) break;
 			}
 			UART_INT_COUNT = 0;
 			break;
@@ -227,7 +228,7 @@ int main(void)
 	Chip_UART_Init(UART_SELECTION);
 	Chip_UART_SetBaud(UART_SELECTION, 9600);
 	Chip_UART_ConfigData(UART_SELECTION, (UART_LCR_WLEN8 | UART_LCR_SBS_1BIT));
-	Chip_UART_SetupFIFOS(UART_SELECTION, (UART_FCR_FIFO_EN | UART_FCR_TRG_LEV1));
+	Chip_UART_SetupFIFOS(UART_SELECTION, (UART_FCR_FIFO_EN | UART_FCR_TRG_LEV0));
 
 	/* Enable UART 3 interrupt */
 	Chip_UART_IntEnable(UART_SELECTION, (UART_IER_RBRINT | UART_IER_RLSINT));
@@ -241,17 +242,17 @@ int main(void)
 	i2c_app_init(I2C0, SPEED_100KHZ);
 
 	while(1) {
-
 		// First word is always 0x7E00, next is the size of packet, next is 0x82 (for some reason)
-		if (data1[0] == 0x7E && data1[1] == 0x00 && data1[2] == 0x14 && data1[3] == 0x82) {
+
+		if (data[0] == 0x7E && data[1] == 0x00 && data[2] == 0x14 && data[3] == 0x82) {
 
 
 			// Get the ADC samples
-			getADCSample(data3, X_AXIS);
-			getADCSample(data3, Y_AXIS);
+			getADCSample(data, X_AXIS);
+			getADCSample(data, Y_AXIS);
 
 			// Output samples on I2C for the right accelerometer
-			if (xbeeAddress(data2) == RIGHT_HAND_ADDR) {
+			if (xbeeAddress(data) == RIGHT_HAND_ADDR) {
 				Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
 				int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
 				tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
@@ -259,7 +260,7 @@ int main(void)
 
 			// Output samples on I2C for the left accelerometer
 			// TODO: I2C1 is not working. Only I2C0
-			else if (xbeeAddress(data2) == LEFT_HAND_ADDR) {
+			else if (xbeeAddress(data) == LEFT_HAND_ADDR) {
 				Chip_I2C_SetMasterEventHandler(I2C0, Chip_I2C_EventHandler);
 				int tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
 				tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
