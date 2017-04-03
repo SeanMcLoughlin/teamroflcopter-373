@@ -256,7 +256,10 @@ int main(void)
 			if (xbeeAddress(latch) == RIGHT_HAND_ADDR) {
 				Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
 				int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
+				//assert(tmp == 2); // To ensure that both bytes are transferred
+
 				tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
+				//assert(tmp == 2); // To ensure that both bytes are transferred
 			}
 
 			// Output samples on I2C for the left accelerometer
