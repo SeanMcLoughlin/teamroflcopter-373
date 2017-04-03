@@ -68,11 +68,26 @@ void getADCSample(uint8_t* data, uint8_t sample) {
 			// X is the first sample, 3 and 4 indices
 			x_axis[0] = data[19];
 			x_axis[1] = data[20];
+
+			// Concatenate the two samples so that you can multiply by 4 (12 bit DAC vs 10 bit sample)
+			uint16_t xtemp = byteConcat(x_axis[0], x_axis[1]);
+			xtemp *= 4;
+
+			// Put the sample back into the indices
+			x_axis[0] = (xtemp & 0xFF00) >> 8;
+			x_axis[1] = (xtemp & 0x00FF);
 			break;
 		case Y_AXIS:
 			// Y is the second sample, 5 and 6 indices
 			y_axis[0] = data[21];
 			y_axis[1] = data[22];
+
+			uint16_t ytemp = byteConcat(y_axis[0], y_axis[1]);
+
+			ytemp *= 4;
+
+			y_axis[0] = (ytemp & 0xFF00) >> 8;
+			y_axis[1] = (ytemp & 0x00FF);
 			break;
 	}
 
@@ -237,7 +252,10 @@ int main(void)
 			if (xbeeAddress(data) == RIGHT_HAND_ADDR) {
 				Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
 				int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
+				//assert(tmp == 2); // To ensure that both bytes are transferred
+
 				tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
+				//assert(tmp == 2); // To ensure that both bytes are transferred
 			}
 
 			// Output samples on I2C for the left accelerometer
