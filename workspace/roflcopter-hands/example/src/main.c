@@ -71,13 +71,24 @@ void getADCSample(uint8_t* data, uint8_t sample) {
 			x_axis[1] = data[20];
 
 			// Concatenate the two samples so that you can multiply by 4 (12 bit DAC vs 10 bit sample)
+
+			// Concatenate the two bytes to one uint16
 			uint16_t xtemp = byteConcat(x_axis[0], x_axis[1]);
+
+			// Multiply by 4 for scaling for a 4 bit dac
 			xtemp *= 4;
-			//if (xtemp > (4095 * ceil(2.1/3.3))) xtemp = 4095 * ceil(2.1/3.3);
-			xtemp = (xtemp - ceil(4095 * (0.4/3.3)))*ceil(3.3/2.4);
+
+			// Scale the range that the accelerometer outputs with linear mapping
+			xtemp = (xtemp - ceil(4095 * (0.4/3.3)))*ceil(3.3/2.4); // 0.4 is min, 2.4 is max - min
+
+			// The left hand has to invert its X axis
+			if (xbeeAddress(&data) == LEFT_HAND_ADDR)
+				xtemp = 4095 - xtemp;
+
 			// Put the sample back into the indices
 			x_axis[0] = (xtemp & 0xFF00) >> 8;
 			x_axis[1] = (xtemp & 0x00FF);
+
 			break;
 		case Y_AXIS:
 			// Y is the second sample, 5 and 6 indices
@@ -86,8 +97,12 @@ void getADCSample(uint8_t* data, uint8_t sample) {
 
 			uint16_t ytemp = byteConcat(y_axis[0], y_axis[1]);
 			ytemp *= 4;
-			//if (ytemp > (4095 * ceil(2.1/3.3))) ytemp = 4095 * ceil(2.1/3.3);
 			ytemp = (ytemp - ceil(4095 * (0.4/3.3)))*ceil(3.3/2.4);
+
+			// The right hand has to invert its Y axis
+			if (xbeeAddress(&data) == RIGHT_HAND_ADDR)
+				ytemp = 4095 - ytemp;
+
 			y_axis[0] = (ytemp & 0xFF00) >> 8;
 			y_axis[1] = (ytemp & 0x00FF);
 			break;
@@ -258,6 +273,7 @@ int main(void)
 
 		// Output samples on I2C1 for the right accelerometer
 		if (xbeeAddress(latch) == RIGHT_HAND_ADDR) {
+
 			Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
 			int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
 			//assert(tmp == 2); // To ensure that both bytes are transferred
@@ -268,6 +284,8 @@ int main(void)
 
 		// Output samples on I2C0 for the left accelerometer
 		else if (xbeeAddress(latch) == LEFT_HAND_ADDR) {
+
+
 			Chip_I2C_SetMasterEventHandler(I2C0, Chip_I2C_EventHandler);
 			int tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
 			tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
