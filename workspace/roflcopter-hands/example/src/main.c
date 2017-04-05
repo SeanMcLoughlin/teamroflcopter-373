@@ -63,7 +63,7 @@ uint32_t xbeeAddress(uint8_t* data) {
 	return address;
 }
 
-void getADCSample(uint8_t* data, uint8_t sample) {
+void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 	switch (sample) {
 		case X_AXIS:
 			// X is the first sample, 3 and 4 indices
@@ -78,16 +78,24 @@ void getADCSample(uint8_t* data, uint8_t sample) {
 			// Multiply by 4 for scaling for a 4 bit dac
 			xtemp *= 4;
 
+
 			// Scale the range that the accelerometer outputs with linear mapping
 			xtemp = (xtemp - ceil(4095 * (0.4/3.3)))*ceil(3.3/2.4); // 0.4 is min, 2.4 is max - min
 
-			// The left hand has to invert its X axis
-			if (xbeeAddress(&data) == LEFT_HAND_ADDR)
-				xtemp = 4095 - xtemp;
+			// Detect integer overflow and don't let it loop around to 0
+			if (xtemp > 4095)
+				xtemp = 4095;
 
 			// Put the sample back into the indices
 			x_axis[0] = (xtemp & 0xFF00) >> 8;
 			x_axis[1] = (xtemp & 0x00FF);
+
+			if (address == LEFT_HAND_ADDR) {
+				// Invert the x axis
+				x_axis[0] = ~x_axis[0] & 0x0F;
+				x_axis[1] = ~x_axis[1];
+			}
+
 
 			break;
 		case Y_AXIS:
@@ -97,11 +105,11 @@ void getADCSample(uint8_t* data, uint8_t sample) {
 
 			uint16_t ytemp = byteConcat(y_axis[0], y_axis[1]);
 			ytemp *= 4;
-			ytemp = (ytemp - ceil(4095 * (0.4/3.3)))*ceil(3.3/2.4);
+			ytemp = (ytemp - ceil(4095 * (0.6/3.3)))*ceil(3.3/1.8);
 
-			// The right hand has to invert its Y axis
-			if (xbeeAddress(&data) == RIGHT_HAND_ADDR)
-				ytemp = 4095 - ytemp;
+			// Detect integer overflow and don't let it loop around to 0
+			if ((int)ytemp > 4095)
+				ytemp = 4095;
 
 			y_axis[0] = (ytemp & 0xFF00) >> 8;
 			y_axis[1] = (ytemp & 0x00FF);
@@ -257,35 +265,33 @@ int main(void)
 	uint8_t latch[24]; // The latched value of data (since we are shifting data in)
 
 	while(1) {
-		// First word is always 0x7E00, next is the size of packet, next is 0x82 (for some reason)
 
+		uint64_t address;
+
+		// First word is always 0x7E00, next is the size of packet, next is 0x82 (for some reason)
 		if (data[0] == 0x7E && data[1] == 0x00 && data[2] == 0x14 && data[3] == 0x82) {
 
 			int i;
 			for (i = 0; i < 24; i++)
 				latch[i] = data[i];
 
+			address = xbeeAddress(latch);
+
 			// Get the ADC samples
-			getADCSample(latch, X_AXIS);
-			getADCSample(latch, Y_AXIS);
+			getADCSample(latch, X_AXIS, address);
+			getADCSample(latch, Y_AXIS, address);
 
 		}
 
 		// Output samples on I2C1 for the right accelerometer
-		if (xbeeAddress(latch) == RIGHT_HAND_ADDR) {
-
+		if (address == RIGHT_HAND_ADDR) {
 			Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
 			int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
-			//assert(tmp == 2); // To ensure that both bytes are transferred
-
 			tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
-			//assert(tmp == 2); // To ensure that both bytes are transferred
 		}
 
 		// Output samples on I2C0 for the left accelerometer
-		else if (xbeeAddress(latch) == LEFT_HAND_ADDR) {
-
-
+		else if (address == LEFT_HAND_ADDR) {
 			Chip_I2C_SetMasterEventHandler(I2C0, Chip_I2C_EventHandler);
 			int tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
 			tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
