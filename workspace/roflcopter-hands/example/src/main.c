@@ -18,7 +18,7 @@
 
 
 #define UART_RRB_SIZE 	0x18 				// Depends on sampling rate. Don't want it to overflow
-#define RIGHT_HAND_ADDR	0x415AEC15			// The LOWER address of the right hand xbee (These DO NOT change with XBEE settings!)
+#define RIGHT_HAND_ADDR	0x415AEC5F			// The LOWER address of the right hand xbee (These DO NOT change with XBEE settings!)
 #define LEFT_HAND_ADDR 	0x40AE5BE4			// The LOWER address of the left hand xbee
 #define ADDR_START_IDX	4					// The index of the start of the address in the XBEE packet
 
@@ -218,6 +218,7 @@ int main(void)
 
 	SystemCoreClockUpdate();
 	Board_Init();
+	Board_SystemInit();
 	Board_UART_Init(UART_SELECTION);
 	Board_LED_Set(0, false);
 
@@ -247,51 +248,31 @@ int main(void)
 
 			int i;
 			for (i = 0; i < 24; i++)
-			{
 				latch[i] = data[i];
-			}
 
 			// Get the ADC samples
 			getADCSample(latch, X_AXIS);
 			getADCSample(latch, Y_AXIS);
 
-			// Output samples on I2C for the right accelerometer
-			if (xbeeAddress(latch) == RIGHT_HAND_ADDR) {
-				Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
-				int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
-				//assert(tmp == 2); // To ensure that both bytes are transferred
-
-				tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
-				//assert(tmp == 2); // To ensure that both bytes are transferred
-			}
-
-			// Output samples on I2C for the left accelerometer
-			// TODO: I2C1 is not working. Only I2C0
-			else if (xbeeAddress(latch) == LEFT_HAND_ADDR) {
-				Chip_I2C_SetMasterEventHandler(I2C0, Chip_I2C_EventHandler);
-				int tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
-				tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
-			}
 		}
-		else {
-			// Output samples on I2C for the right accelerometer
-			if (xbeeAddress(latch) == RIGHT_HAND_ADDR) {
-				Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
-				int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
-				//assert(tmp == 2); // To ensure that both bytes are transferred
 
-				tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
-				//assert(tmp == 2); // To ensure that both bytes are transferred
-			}
+		// Output samples on I2C1 for the right accelerometer
+		if (xbeeAddress(latch) == RIGHT_HAND_ADDR) {
+			Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
+			int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
+			//assert(tmp == 2); // To ensure that both bytes are transferred
 
-			// Output samples on I2C for the left accelerometer
-			// TODO: I2C1 is not working. Only I2C0
-			else if (xbeeAddress(latch) == LEFT_HAND_ADDR) {
-				Chip_I2C_SetMasterEventHandler(I2C0, Chip_I2C_EventHandler);
-				int tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
-				tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
-			}
+			tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
+			//assert(tmp == 2); // To ensure that both bytes are transferred
 		}
+
+		// Output samples on I2C0 for the left accelerometer
+		else if (xbeeAddress(latch) == LEFT_HAND_ADDR) {
+			Chip_I2C_SetMasterEventHandler(I2C0, Chip_I2C_EventHandler);
+			int tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
+			tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
+		}
+
 	}
 	return 1;
 }
