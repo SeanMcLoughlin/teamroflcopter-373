@@ -5,6 +5,7 @@
 
 #include "chip.h"
 #include "board.h"
+#include "gpio_17xx_40xx.h"
 #include "string.h"
 #include <stdio.h>
 #include <assert.h>
@@ -261,6 +262,7 @@ int main(void)
 	/* preemption = 1, sub-priority = 1 */
 	NVIC_SetPriority(IRQ_SELECTION, 1);
 	NVIC_EnableIRQ(IRQ_SELECTION);
+
 
 	uint8_t latch[24]; // The latched value of data (since we are shifting data in)
 
