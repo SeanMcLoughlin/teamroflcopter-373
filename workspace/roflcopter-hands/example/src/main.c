@@ -11,6 +11,9 @@
 #include <assert.h>
 #include <math.h>
 
+#ifndef max
+    #define max(a,b) ((a) > (b) ? (a) : (b))
+#endif
 
 // Select UART Handlers
 #define UART_SELECTION 		LPC_UART3
@@ -79,23 +82,31 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 			// Multiply by 4 for scaling for a 4 bit dac
 			xtemp *= 4;
 
+			// This is to prevent integer "underflow" so that the drone doesn't
+			// stutter at low voltages
+			if (xtemp < ceil(4095 * (0.4/3.3))) {
+				xtemp = 0;
+				x_axis[0] = (xtemp & 0xFF00) >> 8;
+				x_axis[1] = (xtemp & 0x00FF);
+				break;
+			}
+
 
 			// Scale the range that the accelerometer outputs with linear mapping
-			xtemp = (xtemp - ceil(4095 * (0.4/3.3)))*ceil(3.3/2.4); // 0.4 is min, 2.4 is max - min
+			xtemp = (xtemp - ceil(4095 * (0.4/3.3)))*ceil(3.0/2.4); // 0.4 is min, 2.4 is max - min
 
 			// Detect integer overflow and don't let it loop around to 0
-			if (xtemp > 4095)
+			if ((int)xtemp > 4095)
 				xtemp = 4095;
+
+			// Detect if it's within the trigger level (around 1.5V)
+			if (2000 < xtemp && xtemp < 3000)
+				xtemp = 2047;
+
 
 			// Put the sample back into the indices
 			x_axis[0] = (xtemp & 0xFF00) >> 8;
 			x_axis[1] = (xtemp & 0x00FF);
-
-			if (address == LEFT_HAND_ADDR) {
-				// Invert the x axis
-				x_axis[0] = ~x_axis[0] & 0x0F;
-				x_axis[1] = ~x_axis[1];
-			}
 
 
 			break;
@@ -106,11 +117,19 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 
 			uint16_t ytemp = byteConcat(y_axis[0], y_axis[1]);
 			ytemp *= 4;
-			ytemp = (ytemp - ceil(4095 * (0.6/3.3)))*ceil(3.3/1.8);
 
-			// Detect integer overflow and don't let it loop around to 0
-			if ((int)ytemp > 4095)
-				ytemp = 4095;
+//			ytemp = max(ytemp, ceil(4095*(0.7/3.0)) + 100);
+//			ytemp = (ytemp - ceil(4095 * (0.7/3.0)))*ceil(3.0/2.0);
+//
+//			// Detect integer overflow and don't let it loop around to 0
+//			if ((int)ytemp > 4095)
+//				ytemp = 4095;
+//
+//			// Trigger level (don't let the drone spurt)
+//			ytemp -= 300;
+//			if ((int)ytemp > 4095)
+//				ytemp = 0;
+
 
 			y_axis[0] = (ytemp & 0xFF00) >> 8;
 			y_axis[1] = (ytemp & 0x00FF);
@@ -263,12 +282,27 @@ int main(void)
 	NVIC_SetPriority(IRQ_SELECTION, 1);
 	NVIC_EnableIRQ(IRQ_SELECTION);
 
+	/* Initialize GPIO */
+	Chip_GPIO_Init(LPC_GPIO);
+	Chip_GPIO_SetPinDIRInput(LPC_GPIO, 2, 13);	 // Set P2[13] as an input (the bottom-rightmost pin)
+
+
 
 	uint8_t latch[24]; // The latched value of data (since we are shifting data in)
-
+	uint8_t rightHandFlag = 0;	// If high, disables the right hand accelerometer to use the Touch Screen
+	uint8_t GPIOFlag = 0;		// Used to make the buttons toggle
 	while(1) {
 
 		uint64_t address;
+
+		// If the GPIO state is low (note that the DIO from XBEE are active low for the buttons
+		if (~Chip_GPIO_ReadPortBit(LPC_GPIO, 2, 13) && ~GPIOFlag) {
+			GPIOFlag = 1;
+			rightHandFlag = ~(rightHandFlag ^ 0); // Toggle the right hand flag
+		}
+		else if (Chip_GPIO_ReadPortBit(LPC_GPIO, 2, 13)) {
+			GPIOFlag = 0;
+		}
 
 		// First word is always 0x7E00, next is the size of packet, next is 0x82 (for some reason)
 		if (data[0] == 0x7E && data[1] == 0x00 && data[2] == 0x14 && data[3] == 0x82) {
@@ -287,6 +321,16 @@ int main(void)
 
 		// Output samples on I2C1 for the right accelerometer
 		if (address == RIGHT_HAND_ADDR) {
+
+			// If we have toggled off the right hand accelerometer,
+			// write 2047 (1.5V) to the DAC
+			if (rightHandFlag) {
+				x_axis[0] = 0x07;
+				x_axis[1] = 0xFF;
+				y_axis[0] = 0x07;
+				y_axis[1] = 0xFF;
+			}
+
 			Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
 			int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
 			tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
