@@ -99,9 +99,9 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 			if ((int)xtemp > 4095)
 				xtemp = 4095;
 
-			// Detect if it's within the trigger level (around 1.5V)
-			if (2000 < xtemp && xtemp < 3000)
-				xtemp = 2047;
+//			// Detect if it's within the trigger level (around 1.5V)
+//			if (2000 < xtemp && xtemp < 3000)
+//				xtemp = 2047;
 
 
 			// Put the sample back into the indices
@@ -118,17 +118,17 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 			uint16_t ytemp = byteConcat(y_axis[0], y_axis[1]);
 			ytemp *= 4;
 
-//			ytemp = max(ytemp, ceil(4095*(0.7/3.0)) + 100);
-//			ytemp = (ytemp - ceil(4095 * (0.7/3.0)))*ceil(3.0/2.0);
-//
-//			// Detect integer overflow and don't let it loop around to 0
-//			if ((int)ytemp > 4095)
-//				ytemp = 4095;
-//
-//			// Trigger level (don't let the drone spurt)
-//			ytemp -= 300;
-//			if ((int)ytemp > 4095)
-//				ytemp = 0;
+			ytemp = max(ytemp, ceil(4095*(0.7/3.0)) + 100);
+			ytemp = (ytemp - ceil(4095 * (0.7/3.0)))*ceil(3.0/2.0);
+
+			// Detect integer overflow and don't let it loop around to 0
+			if ((int)ytemp > 4095)
+				ytemp = 4095;
+
+			// Trigger level (don't let the drone spurt)
+			ytemp -= 300;
+			if ((int)ytemp > 4095)
+				ytemp = 0;
 
 
 			y_axis[0] = (ytemp & 0xFF00) >> 8;
