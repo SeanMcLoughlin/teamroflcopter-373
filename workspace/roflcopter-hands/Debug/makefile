@@ -29,7 +29,7 @@ all: roflcopter-hands.axf
 roflcopter-hands.axf: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: MCU Linker'
-	arm-none-eabi-gcc -nostdlib -L"D:\373 Git\teamroflcopter-373\workspace\lpc_chip_175x_6x\Debug" -L"D:\373 Git\teamroflcopter-373\workspace\lpc_board_nxp_lpcxpresso_1769\Debug" -Xlinker -Map="roflcopter-hands.map" -Xlinker --gc-sections -mcpu=cortex-m3 -mthumb -T "periph_uart_rb_Debug.ld" -o "roflcopter-hands.axf" $(OBJS) $(USER_OBJS) $(LIBS)
+	arm-none-eabi-gcc -nostdlib -L"/home/smclough/Documents/university/teamroflcopter-373/workspace/lpc_chip_175x_6x/Debug" -L"/home/smclough/Documents/university/teamroflcopter-373/workspace/lpc_board_nxp_lpcxpresso_1769/Debug" -Xlinker -Map="roflcopter-hands.map" -Xlinker --gc-sections -mcpu=cortex-m3 -mthumb -T "periph_uart_rb_Debug.ld" -o "roflcopter-hands.axf" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 	$(MAKE) --no-print-directory post-build
