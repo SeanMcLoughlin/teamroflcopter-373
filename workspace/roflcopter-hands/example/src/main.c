@@ -6,6 +6,7 @@
 #include "chip.h"
 #include "board.h"
 #include "gpio_17xx_40xx.h"
+#include "gpioint_17xx_40xx.h"
 #include "string.h"
 #include <stdio.h>
 #include <assert.h>
@@ -26,6 +27,12 @@
 #define LEFT_HAND_ADDR 	0x40AE5BE4			// The LOWER address of the left hand xbee
 #define ADDR_START_IDX	4					// The index of the start of the address in the XBEE packet
 
+/* On the LPC1769, the GPIO interrupts share the EINT3 vector. */
+#define GPIO_IRQ_HANDLER  			EINT3_IRQHandler/* GPIO interrupt IRQ function name */
+#define GPIO_INTERRUPT_NVIC_NAME    EINT3_IRQn		/* GPIO interrupt NVIC interrupt name */
+#define GPIO_INTERRUPT_PIN     		13				/* GPIO pin number mapped to interrupt */
+#define GPIO_INTERRUPT_PORT    		GPIOINT_PORT2	/* GPIO port number mapped to interrupt */
+
 #define DAC_ADDRESS_0 0x62
 #define DAC_ADDRESS_1 0x63
 #define SPEED_100KHZ  1000000
@@ -37,6 +44,8 @@ static uint8_t x_axis[2], y_axis[2];
 static int mode_poll;
 static uint8_t iox_data[2]; /* PORT0 input port, PORT1 Output port */
 
+// Used for disabling right hand to use screen
+uint8_t rightHandFlag = 0;
 
 enum adcsample_t	{X_AXIS = 0, Y_AXIS = 1};
 
@@ -50,6 +59,16 @@ enum adcsample_t	{X_AXIS = 0, Y_AXIS = 1};
  */
 uint16_t byteConcat(uint8_t byte1, uint8_t byte2) {
 	return (byte1 << 8) | byte2;
+}
+
+/**
+ * @brief	Handle interrupt from GPIO pin or GPIO pin mapped to PININT
+ * @return	Nothing
+ */
+void GPIO_IRQ_HANDLER(void)
+{
+	Chip_GPIOINT_ClearIntStatus(LPC_GPIOINT, GPIO_INTERRUPT_PORT, 1 << GPIO_INTERRUPT_PIN);
+	rightHandFlag = ~rightHandFlag; //Toggle disable flag for ignoring right hand
 }
 
 /*
@@ -100,8 +119,8 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 				xtemp = 4095;
 
 			// Detect if it's within the trigger level (around 1.5V)
-			if (2000 < xtemp && xtemp < 3000)
-				xtemp = 2047;
+			//if (2000 < xtemp && xtemp < 3000)
+				//xtemp = 2047;
 
 
 			// Put the sample back into the indices
@@ -138,6 +157,7 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 
 
 }
+
 uint8_t validAddress(uint8_t* data) {
 	return xbeeAddress(data) == RIGHT_HAND_ADDR || xbeeAddress(data) == LEFT_HAND_ADDR;
 }
@@ -151,8 +171,6 @@ static void i2c_state_handling(I2C_ID_T id)
 		Chip_I2C_SlaveStateHandler(id);
 	}
 }
-
-
 
 /* Set I2C mode to polling/interrupt */
 static void i2c_set_mode(I2C_ID_T id, int polling)
@@ -231,7 +249,7 @@ void SysTick_Handler(void)
 }
 
 /**
- * @brief	I2C Interrupt Handler
+ * @brief	I2C1 Interrupt Handler
  * @return	None
  */
 void I2C1_IRQHandler(void)
@@ -251,7 +269,6 @@ void I2C0_IRQHandler(void)
 
 
 
-
 /**
  * @brief	Main program body
  * @return	Always returns 1 (returns with failure, since it should never return)
@@ -263,7 +280,6 @@ int main(void)
 	Board_Init();
 	Board_SystemInit();
 	Board_UART_Init(UART_SELECTION);
-	Board_LED_Set(0, false);
 
 	/* Setup UART3 for 9.6k8n1 */
 	Chip_UART_Init(UART_SELECTION);
@@ -284,25 +300,28 @@ int main(void)
 
 	/* Initialize GPIO */
 	Chip_GPIO_Init(LPC_GPIO);
-	Chip_GPIO_SetPinDIRInput(LPC_GPIO, 2, 13);	 // Set P2[13] as an input (the bottom-rightmost pin)
+	Chip_GPIO_SetPinDIRInput(LPC_GPIO, GPIO_INTERRUPT_PORT, GPIO_INTERRUPT_PIN);	 		// Set P2[13] as an input (the bottom-rightmost pin)
+	Chip_GPIOINT_SetIntFalling(LPC_GPIOINT, GPIO_INTERRUPT_PORT, 1 << GPIO_INTERRUPT_PIN);	// Set to falling edge interrupt
 
+	/* preemption = 2, sub-priority = 2 */
+	NVIC_SetPriority(GPIO_INTERRUPT_NVIC_NAME, 2);
+	NVIC_EnableIRQ(GPIO_INTERRUPT_NVIC_NAME);
 
-
-	uint8_t latch[24]; // The latched value of data (since we are shifting data in)
-	uint8_t rightHandFlag = 0;	// If high, disables the right hand accelerometer to use the Touch Screen
-	uint8_t GPIOFlag = 0;		// Used to make the buttons toggle
+	uint8_t latch[24]; 			// The latched value of data (since we are shifting data in)
+//	uint8_t rightHandFlag = 0;	// If high, disables the right hand accelerometer to use the Touch Screen
+//	uint8_t GPIOFlag = 0;		// Used to make the buttons toggle
 	while(1) {
 
 		uint64_t address;
 
 		// If the GPIO state is low (note that the DIO from XBEE are active low for the buttons
-		if (~Chip_GPIO_ReadPortBit(LPC_GPIO, 2, 13) && ~GPIOFlag) {
-			GPIOFlag = 1;
-			rightHandFlag = ~(rightHandFlag ^ 0); // Toggle the right hand flag
-		}
-		else if (Chip_GPIO_ReadPortBit(LPC_GPIO, 2, 13)) {
-			GPIOFlag = 0;
-		}
+//		if (~Chip_GPIO_ReadPortBit(LPC_GPIO, 2, 13) && ~GPIOFlag) {
+//			GPIOFlag = 1;
+//			rightHandFlag = ~(rightHandFlag ^ 0); // Toggle the right hand flag
+//		}
+//		else if (Chip_GPIO_ReadPortBit(LPC_GPIO, 2, 13)) {
+//			GPIOFlag = 0;
+//		}
 
 		// First word is always 0x7E00, next is the size of packet, next is 0x82 (for some reason)
 		if (data[0] == 0x7E && data[1] == 0x00 && data[2] == 0x14 && data[3] == 0x82) {
