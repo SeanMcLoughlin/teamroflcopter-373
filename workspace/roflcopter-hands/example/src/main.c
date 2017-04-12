@@ -37,6 +37,9 @@
 #define DAC_ADDRESS_1 0x63
 #define SPEED_100KHZ  1000000
 
+// This threshold is so that the drone doesn't stutter at the treshold voltage
+#define THRESHOLD 800		// 700mV scaled for 12 bit dac (slightly less for safety)
+
 /* axes for i2c transfer */
 static uint8_t x_axis[2], y_axis[2];
 
@@ -90,8 +93,8 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 	switch (sample) {
 		case X_AXIS:
 			// X is the first sample, 3 and 4 indices
-			x_axis[0] = data[19];
-			x_axis[1] = data[20];
+			x_axis[0] = data[21];
+			x_axis[1] = data[22];
 
 			// Concatenate the two samples so that you can multiply by 4 (12 bit DAC vs 10 bit sample)
 
@@ -101,28 +104,12 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 			// Multiply by 4 for scaling for a 4 bit dac
 			xtemp *= 4;
 
-			// This is to prevent integer "underflow" so that the drone doesn't
-			// stutter at low voltages
-			if (xtemp < ceil(4095 * (0.4/3.3))) {
-				xtemp = 0;
-				x_axis[0] = (xtemp & 0xFF00) >> 8;
-				x_axis[1] = (xtemp & 0x00FF);
-				break;
-			}
-
-
 			// Scale the range that the accelerometer outputs with linear mapping
 			xtemp = (xtemp - ceil(4095 * (0.4/3.3)))*ceil(3.0/2.4); // 0.4 is min, 2.4 is max - min
 
 			// Detect integer overflow and don't let it loop around to 0
 			if ((int)xtemp > 4095)
 				xtemp = 4095;
-
-//			// Detect if it's within the trigger level (around 1.5V)
-//			if (2000 < xtemp && xtemp < 3000)
-//				xtemp = 2047;
-
-
 
 			// Put the sample back into the indices
 			x_axis[0] = (xtemp & 0xFF00) >> 8;
@@ -132,24 +119,23 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 			break;
 		case Y_AXIS:
 			// Y is the second sample, 5 and 6 indices
-			y_axis[0] = data[21];
-			y_axis[1] = data[22];
+			y_axis[0] = data[19];
+			y_axis[1] = data[20];
 
 			uint16_t ytemp = byteConcat(y_axis[0], y_axis[1]);
 			ytemp *= 4;
 
-			ytemp = max(ytemp, ceil(4095*(0.7/3.3)) + 100);
-			ytemp = ceil(ytemp - (4095 * (0.7/3.3)))*(3.3/2.0);
+			ytemp = max(ytemp, ceil(4095*(0.9/3.3)) + 100);
+			ytemp = ceil(ytemp - (4095 * (0.9/3.3)))*(3.0/2.0);
 
 			// Detect integer overflow and don't let it loop around to 0
 			if ((int)ytemp > 4095)
 				ytemp = 4095;
 
-			// Trigger level (don't let the drone spurt)
-			ytemp -= 300;
-			if ((int)ytemp > 4095)
-				ytemp = 0;
 
+			// Threshold Voltage Checker
+			if (THRESHOLD - 300 < (int)ytemp && (int)ytemp < THRESHOLD + 300)
+				ytemp = THRESHOLD;
 
 			y_axis[0] = (ytemp & 0xFF00) >> 8;
 			y_axis[1] = (ytemp & 0x00FF);
@@ -342,6 +328,7 @@ int main(void)
 				y_axis[0] = 0x07;
 				y_axis[1] = 0xFF;
 			}
+
 
 			Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
 			int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
