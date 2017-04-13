@@ -37,8 +37,15 @@
 #define DAC_ADDRESS_1 0x63
 #define SPEED_100KHZ  1000000
 
-// This threshold is so that the drone doesn't stutter at the treshold voltage
-#define THRESHOLD 800		// 700mV scaled for 12 bit dac (slightly less for safety)
+// This threshold is so that it is easier to keep the drone balanced with the right hand.
+// That is, if your hand is close to 1.5V, it will output 1.5V.
+// This makes the drone substantially easier to control, but sacrifices some resolution
+// in the speed that you can move it.
+#define RIGHT_HAND_THRESHOLD 2047	// 1.5V scaled for 12 bit DAC
+
+// Hystresis to stop stuttering
+#define HYSTRESIS_UPPER_THRESHOLD 1000		// Turn on Threshold
+#define HYSTRESIS_LOWER_THRESHOLD 500		// Turn off Threshold
 
 /* axes for i2c transfer */
 static uint8_t x_axis[2], y_axis[2];
@@ -51,6 +58,12 @@ static uint8_t iox_data[2]; /* PORT0 input port, PORT1 Output port */
 uint8_t rightHandFlag = 0;
 
 enum adcsample_t	{X_AXIS = 0, Y_AXIS = 1};
+
+// Ring buffers for averaging the data to make smooth transitions
+#define RINGBUFFSIZE 16
+static RINGBUFF_T x_left_ring, y_left_ring, x_right_ring, y_right_ring;
+static uint16_t x_left_buff[RINGBUFFSIZE], y_left_buff[RINGBUFFSIZE], x_right_buff[RINGBUFFSIZE], y_right_buff[RINGBUFFSIZE];
+static uint64_t x_left_sum, y_left_sum, x_right_sum, y_right_sum;
 
 /*
  * PRIVATE FUNCTIONS
@@ -89,6 +102,7 @@ uint32_t xbeeAddress(uint8_t* data) {
 	return address;
 }
 
+uint8_t on_flag = 0;
 void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 	switch (sample) {
 		case X_AXIS:
@@ -104,12 +118,65 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 			// Multiply by 4 for scaling for a 4 bit dac
 			xtemp *= 4;
 
-			// Scale the range that the accelerometer outputs with linear mapping
-			xtemp = (xtemp - ceil(4095 * (0.4/3.3)))*ceil(3.0/2.4); // 0.4 is min, 2.4 is max - min
 
-			// Detect integer overflow and don't let it loop around to 0
-			if ((int)xtemp > 4095)
-				xtemp = 4095;
+
+			// If the ring buffer is full, pop a value and subtract it from
+			// the sum. Then add the new value in and add it to the sum.
+			// Otherwise, don't pop and just continue.
+			// Provides O(1) averaging.
+			if (address == LEFT_HAND_ADDR) {
+
+				// Scale the range that the accelerometer outputs with linear mapping
+				xtemp = (xtemp - ceil(4095 * (0.4/3.3)))*ceil(3.0/2.4); // 0.4 is min, 2.4 is max - min
+
+				// Detect integer overflow and don't let it loop around to 0
+				if ((int)xtemp > 4095)
+					xtemp = 4095;
+
+				uint8_t insertbool = RingBuffer_Insert(&x_left_ring, &xtemp);
+				if (!insertbool) {
+					uint16_t value;
+					RingBuffer_Pop(&x_left_ring, &value);
+					x_left_sum -= value;
+					x_left_sum += xtemp;
+					value = RingBuffer_Insert(&x_left_ring, &xtemp);
+				}
+				else {
+					x_left_sum += xtemp;
+				}
+
+				// Average the ring buffer;
+				xtemp = x_left_sum / RINGBUFFSIZE;
+			}
+			else if (address == RIGHT_HAND_ADDR) {
+
+				// Scale the range that the accelerometer outputs with linear mapping
+				xtemp = ceil(xtemp - (4095 * (0.7/3.3)))*(3.0/1.5);
+
+				// Detect integer overflow and don't let it loop around to 0
+				if ((int)xtemp > 4095)
+					xtemp = 4095;
+
+				uint8_t insertbool = RingBuffer_Insert(&x_right_ring, &xtemp);
+				if (!insertbool) {
+					uint16_t value;
+					RingBuffer_Pop(&x_right_ring, &value);
+					x_right_sum -= value;
+					x_right_sum += xtemp;
+					value = RingBuffer_Insert(&x_right_ring, &xtemp);
+				}
+				else {
+					x_right_sum += xtemp;
+				}
+
+				// Average the ring buffer;
+				xtemp = x_right_sum / RINGBUFFSIZE;
+
+
+				// Keep a threshold range to make sure that you can keep the drone balanced.
+				if (RIGHT_HAND_THRESHOLD-500 < xtemp && xtemp < RIGHT_HAND_THRESHOLD+500)
+					xtemp = RIGHT_HAND_THRESHOLD;
+			}
 
 			// Put the sample back into the indices
 			x_axis[0] = (xtemp & 0xFF00) >> 8;
@@ -126,16 +193,67 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 			ytemp *= 4;
 
 			ytemp = max(ytemp, ceil(4095*(0.9/3.3)) + 100);
-			ytemp = ceil(ytemp - (4095 * (0.9/3.3)))*(3.0/2.0);
+			ytemp = ceil(ytemp - (4095 * (0.9/3.3)))*(3.0/1.5);
 
 			// Detect integer overflow and don't let it loop around to 0
 			if ((int)ytemp > 4095)
 				ytemp = 4095;
 
+			// If the ring buffer is full, pop a value and subtract it from
+			// the sum. Then add the new value in and add it to the sum.
+			// Otherwise, don't pop and just continue.
+			// Provides O(1) averaging.
+			if (address == LEFT_HAND_ADDR) {
+				uint8_t insertbool = RingBuffer_Insert(&y_left_ring, &ytemp);
+				if (!insertbool) {
+					uint16_t value;
+					RingBuffer_Pop(&y_left_ring, &value);
+					y_left_sum -= value;
+					y_left_sum += ytemp;
+					value = RingBuffer_Insert(&y_left_ring, &ytemp);
+				}
+				else {
+					y_left_sum += ytemp;
+				}
 
-			// Threshold Voltage Checker
-			if (THRESHOLD - 300 < (int)ytemp && (int)ytemp < THRESHOLD + 300)
-				ytemp = THRESHOLD;
+				// Average the ring buffer;
+				ytemp = y_left_sum / RINGBUFFSIZE;
+
+				// Apply hystresis to the left hand Y axis to stop drone stuttering
+				if (ytemp >= HYSTRESIS_UPPER_THRESHOLD)
+					on_flag = 1;
+				else if (ytemp <= HYSTRESIS_LOWER_THRESHOLD)
+					on_flag = 0;
+
+				if (!on_flag) {
+					ytemp = 0;
+				}
+			}
+			else if (address == RIGHT_HAND_ADDR) {
+				uint8_t insertbool = RingBuffer_Insert(&y_right_ring, &ytemp);
+				if (!insertbool) {
+					uint16_t value;
+					RingBuffer_Pop(&y_right_ring, &value);
+					y_right_sum -= value;
+					y_right_sum += ytemp;
+					value = RingBuffer_Insert(&y_right_ring, &ytemp);
+				}
+				else {
+					y_right_sum += ytemp;
+				}
+				// Average the ring buffer;
+				ytemp = y_right_sum / RINGBUFFSIZE;
+
+				// Add 500 to right hand because it wasn't scaled properly
+				// after looking at Oscope
+				ytemp += 500;
+
+				// Keep a threshold range to make sure that you can keep the drone balanced.
+				if (RIGHT_HAND_THRESHOLD-500 < ytemp && ytemp < RIGHT_HAND_THRESHOLD+500)
+					ytemp = RIGHT_HAND_THRESHOLD;
+			}
+
+
 
 			y_axis[0] = (ytemp & 0xFF00) >> 8;
 			y_axis[1] = (ytemp & 0x00FF);
@@ -293,6 +411,12 @@ int main(void)
 	/* preemption = 2, sub-priority = 2 */
 	NVIC_SetPriority(GPIO_INTERRUPT_NVIC_NAME, 2);
 	NVIC_EnableIRQ(GPIO_INTERRUPT_NVIC_NAME);
+
+	// Initialize ring buffers
+	RingBuffer_Init(&x_left_ring, x_left_buff, 2, RINGBUFFSIZE);
+	RingBuffer_Init(&y_left_ring, y_left_buff, 2, RINGBUFFSIZE);
+	RingBuffer_Init(&x_right_ring, x_right_buff, 2, RINGBUFFSIZE);
+	RingBuffer_Init(&y_right_ring, y_right_buff, 2, RINGBUFFSIZE);
 
 	uint8_t latch[24]; 			// The latched value of data (since we are shifting data in)
 
