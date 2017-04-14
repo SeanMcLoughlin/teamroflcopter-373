@@ -23,7 +23,7 @@
 
 
 #define UART_RRB_SIZE 	0x18 				// Depends on sampling rate. Don't want it to overflow
-#define RIGHT_HAND_ADDR	0x415AEC5F			// The LOWER address of the right hand xbee (These DO NOT change with XBEE settings!)
+#define RIGHT_HAND_ADDR	0x416A1E08			// The LOWER address of the right hand xbee (These DO NOT change with XBEE settings!)
 #define LEFT_HAND_ADDR 	0x40AE5BE4			// The LOWER address of the left hand xbee
 #define ADDR_START_IDX	4					// The index of the start of the address in the XBEE packet
 
