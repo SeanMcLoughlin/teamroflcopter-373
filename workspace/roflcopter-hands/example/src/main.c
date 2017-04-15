@@ -41,7 +41,9 @@
 // That is, if your hand is close to 1.5V, it will output 1.5V.
 // This makes the drone substantially easier to control, but sacrifices some resolution
 // in the speed that you can move it.
-#define RIGHT_HAND_THRESHOLD 2047	// 1.5V scaled for 12 bit DAC
+#define RIGHT_HAND_X_THRESHOLD 	0x07FF	// 1.5V scaled for 12 bit DAC
+#define RIGHT_HAND_Y_THRESHOLD 	0x07FF
+#define THRESH_VARIANCE			1200
 
 // Hystresis to stop stuttering
 #define HYSTRESIS_UPPER_THRESHOLD 1000		// Turn on Threshold
@@ -55,7 +57,7 @@ static int mode_poll;
 static uint8_t iox_data[2]; /* PORT0 input port, PORT1 Output port */
 
 // Used for disabling right hand to use screen
-uint8_t rightHandFlag = 0;
+uint8_t killSwitchFlag = 0;
 
 enum adcsample_t	{X_AXIS = 0, Y_AXIS = 1};
 
@@ -84,7 +86,7 @@ uint16_t byteConcat(uint8_t byte1, uint8_t byte2) {
 void GPIO_IRQ_HANDLER(void)
 {
 	Chip_GPIOINT_ClearIntStatus(LPC_GPIOINT, GPIO_INTERRUPT_PORT, 1 << GPIO_INTERRUPT_PIN);
-	rightHandFlag = ~rightHandFlag; //Toggle disable flag for ignoring right hand
+	killSwitchFlag = ~killSwitchFlag; //Toggle disable flag for ignoring right hand
 }
 
 /*
@@ -151,7 +153,7 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 			else if (address == RIGHT_HAND_ADDR) {
 
 				// Scale the range that the accelerometer outputs with linear mapping
-				xtemp = ceil(xtemp - (4095 * (0.7/3.3)))*(3.0/1.5);
+				xtemp = ceil(xtemp - (4095 * (0.9/3.3)))*(3.0/1.3);
 
 				// Detect integer overflow and don't let it loop around to 0
 				if ((int)xtemp > 4095)
@@ -174,9 +176,17 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 
 
 				// Keep a threshold range to make sure that you can keep the drone balanced.
-				if (RIGHT_HAND_THRESHOLD-500 < xtemp && xtemp < RIGHT_HAND_THRESHOLD+500)
-					xtemp = RIGHT_HAND_THRESHOLD;
+				if (RIGHT_HAND_X_THRESHOLD-THRESH_VARIANCE < xtemp && xtemp < RIGHT_HAND_X_THRESHOLD+THRESH_VARIANCE)
+					xtemp = RIGHT_HAND_X_THRESHOLD;
 			}
+
+			// Detect integer overflow and don't let it loop around to 0
+			if ((int)xtemp > 4095)
+				xtemp = 4095;
+
+			// Invert the x axis
+			xtemp = ~xtemp & 0x0FFF;
+
 
 			// Put the sample back into the indices
 			x_axis[0] = (xtemp & 0xFF00) >> 8;
@@ -192,18 +202,21 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 			uint16_t ytemp = byteConcat(y_axis[0], y_axis[1]);
 			ytemp *= 4;
 
-			ytemp = max(ytemp, ceil(4095*(0.9/3.3)) + 100);
-			ytemp = ceil(ytemp - (4095 * (0.9/3.3)))*(3.0/1.5);
 
-			// Detect integer overflow and don't let it loop around to 0
-			if ((int)ytemp > 4095)
-				ytemp = 4095;
 
 			// If the ring buffer is full, pop a value and subtract it from
 			// the sum. Then add the new value in and add it to the sum.
 			// Otherwise, don't pop and just continue.
 			// Provides O(1) averaging.
 			if (address == LEFT_HAND_ADDR) {
+
+				ytemp = max(ytemp, ceil(4095*(0.9/3.3)) + 100);
+				ytemp = ceil(ytemp - (4095 * (0.9/3.3)))*(3.0/1.5);
+
+				// Detect integer overflow and don't let it loop around to 0
+				if ((int)ytemp > 4095)
+					ytemp = 4095;
+
 				uint8_t insertbool = RingBuffer_Insert(&y_left_ring, &ytemp);
 				if (!insertbool) {
 					uint16_t value;
@@ -230,6 +243,14 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 				}
 			}
 			else if (address == RIGHT_HAND_ADDR) {
+
+				ytemp = max(ytemp, ceil(4095*(0.9/3.3)) + 100);
+				ytemp = ceil(ytemp - (4095 * (0.9/3.3)))*(3.3/1.3);
+
+				// Detect integer overflow and don't let it loop around to 0
+				if ((int)ytemp > 4095)
+					ytemp = 4095;
+
 				uint8_t insertbool = RingBuffer_Insert(&y_right_ring, &ytemp);
 				if (!insertbool) {
 					uint16_t value;
@@ -249,11 +270,13 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 				ytemp += 500;
 
 				// Keep a threshold range to make sure that you can keep the drone balanced.
-				if (RIGHT_HAND_THRESHOLD-500 < ytemp && ytemp < RIGHT_HAND_THRESHOLD+500)
-					ytemp = RIGHT_HAND_THRESHOLD;
+				if (RIGHT_HAND_Y_THRESHOLD-THRESH_VARIANCE < ytemp && ytemp < RIGHT_HAND_Y_THRESHOLD+THRESH_VARIANCE)
+					ytemp = RIGHT_HAND_Y_THRESHOLD;
 			}
 
-
+			// Detect integer overflow and don't let it loop around to 0
+			if ((int)ytemp > 4095)
+				ytemp = 4095;
 
 			y_axis[0] = (ytemp & 0xFF00) >> 8;
 			y_axis[1] = (ytemp & 0x00FF);
@@ -444,16 +467,6 @@ int main(void)
 		// Output samples on I2C1 for the right accelerometer
 		if (address == RIGHT_HAND_ADDR) {
 
-			// If we have toggled off the right hand accelerometer,
-			// write 2047 (1.5V) to the DAC
-			if (rightHandFlag) {
-				x_axis[0] = 0x07;
-				x_axis[1] = 0xFF;
-				y_axis[0] = 0x07;
-				y_axis[1] = 0xFF;
-			}
-
-
 			Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
 			int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
 			tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
@@ -461,6 +474,16 @@ int main(void)
 
 		// Output samples on I2C0 for the left accelerometer
 		else if (address == LEFT_HAND_ADDR) {
+
+
+			// This is a kill switch so that we can turn off the drone if it freaks out
+			if (killSwitchFlag) {
+				x_axis[0] = 0x00;
+				x_axis[1] = 0x00;
+				y_axis[0] = 0x00;
+				y_axis[1] = 0x00;
+			}
+
 			Chip_I2C_SetMasterEventHandler(I2C0, Chip_I2C_EventHandler);
 			int tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
 			tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
