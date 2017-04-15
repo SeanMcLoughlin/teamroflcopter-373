@@ -16,7 +16,7 @@
     #define max(a,b) ((a) > (b) ? (a) : (b))
 #endif
 
-// Select UART Handlers
+/* Select UART Handlers */
 #define UART_SELECTION 		LPC_UART3
 #define IRQ_SELECTION 		UART3_IRQn
 #define HANDLER_NAME 		UART3_IRQHandler
@@ -33,32 +33,35 @@
 #define GPIO_INTERRUPT_PIN     		13				/* GPIO pin number mapped to interrupt */
 #define GPIO_INTERRUPT_PORT    		GPIOINT_PORT2	/* GPIO port number mapped to interrupt */
 
-#define DAC_ADDRESS_0 0x62
-#define DAC_ADDRESS_1 0x63
-#define SPEED_100KHZ  1000000
+/* I2C DAC Addresses and such */
+#define DAC_ADDRESS_0	0x62
+#define DAC_ADDRESS_1	0x63
+#define SPEED_100KHZ 	1000000
 
 // This threshold is so that it is easier to keep the drone balanced with the right hand.
 // That is, if your hand is close to 1.5V, it will output 1.5V.
 // This makes the drone substantially easier to control, but sacrifices some resolution
-// in the speed that you can move it.
+// in the speed that you can move it. This is fine, as it makes it
 #define RIGHT_HAND_X_THRESHOLD 	0x07FF	// 1.5V scaled for 12 bit DAC
-#define RIGHT_HAND_Y_THRESHOLD 	0x07FF
-#define THRESH_VARIANCE			1200
+#define RIGHT_HAND_Y_THRESHOLD 	0x07FF	// 1.5V scaled for 12 bit DAC
+#define THRESH_VARIANCE			1200	//
 
-// Hystresis to stop stuttering
+// Hystresis to stop stuttering at the turn-on threshold
 #define HYSTRESIS_UPPER_THRESHOLD 1000		// Turn on Threshold
 #define HYSTRESIS_LOWER_THRESHOLD 500		// Turn off Threshold
+uint8_t on_flag = 0;
 
 /* axes for i2c transfer */
 static uint8_t x_axis[2], y_axis[2];
 
-// Used for i2c
+/* Variables for I2C */
 static int mode_poll;
 static uint8_t iox_data[2]; /* PORT0 input port, PORT1 Output port */
 
-// Used for disabling right hand to use screen
+// A kill switch if things go wrong
 uint8_t killSwitchFlag = 0;
 
+// Enum for sample types
 enum adcsample_t	{X_AXIS = 0, Y_AXIS = 1};
 
 // Ring buffers for averaging the data to make smooth transitions
@@ -104,7 +107,7 @@ uint32_t xbeeAddress(uint8_t* data) {
 	return address;
 }
 
-uint8_t on_flag = 0;
+
 void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 	switch (sample) {
 		case X_AXIS:
@@ -119,8 +122,6 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 
 			// Multiply by 4 for scaling for a 4 bit dac
 			xtemp *= 4;
-
-
 
 			// If the ring buffer is full, pop a value and subtract it from
 			// the sum. Then add the new value in and add it to the sum.
@@ -201,8 +202,6 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 
 			uint16_t ytemp = byteConcat(y_axis[0], y_axis[1]);
 			ytemp *= 4;
-
-
 
 			// If the ring buffer is full, pop a value and subtract it from
 			// the sum. Then add the new value in and add it to the sum.
@@ -354,12 +353,16 @@ uint8_t UART_INT_COUNT = 0;
 uint8_t UART_BYTES;
 uint8_t data[24];
 void HANDLER_NAME(void) {
+
+	// Shift all data over by 8 bytes
 	int i;
 	for(i = 0; i < 16; i++)
 	{
 		data[i] = data[i+8];
 	}
 	i = 16;
+
+	// Read in the new data from the UART buffer
 	while (Chip_UART_ReadLineStatus(UART_SELECTION) & UART_LSR_RDR) {
 		data[i++] = Chip_UART_ReadByte(UART_SELECTION);
 		if (i == 24) break; // For safety
@@ -435,7 +438,7 @@ int main(void)
 	NVIC_SetPriority(GPIO_INTERRUPT_NVIC_NAME, 2);
 	NVIC_EnableIRQ(GPIO_INTERRUPT_NVIC_NAME);
 
-	// Initialize ring buffers
+	// Initialize ring buffers (used for smoothness)
 	RingBuffer_Init(&x_left_ring, x_left_buff, 2, RINGBUFFSIZE);
 	RingBuffer_Init(&y_left_ring, y_left_buff, 2, RINGBUFFSIZE);
 	RingBuffer_Init(&x_right_ring, x_right_buff, 2, RINGBUFFSIZE);
@@ -447,18 +450,18 @@ int main(void)
 
 		uint64_t address;
 
-		// If the GPIO state is low (note that the DIO from XBEE are active low for the buttons
-
-		// First word is always 0x7E00, next is the size of packet, next is 0x82 (for some reason)
+		// First word is always 0x7E00, next is the size of packet, next is 0x82 to determine packet type
 		if (data[0] == 0x7E && data[1] == 0x00 && data[2] == 0x14 && data[3] == 0x82) {
 
+			// Latch the data wire so that we can read from it without other interrupts ruining the data
 			int i;
 			for (i = 0; i < 24; i++)
 				latch[i] = data[i];
 
+			// Extract the address
 			address = xbeeAddress(latch);
 
-			// Get the ADC samples
+			// Extract the ADC samples
 			getADCSample(latch, X_AXIS, address);
 			getADCSample(latch, Y_AXIS, address);
 
@@ -468,8 +471,8 @@ int main(void)
 		if (address == RIGHT_HAND_ADDR) {
 
 			Chip_I2C_SetMasterEventHandler(I2C1, Chip_I2C_EventHandler);
-			int tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
-			tmp = Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
+			Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_0, x_axis, 2);
+			Chip_I2C_MasterSend(I2C1, DAC_ADDRESS_1, y_axis, 2);
 		}
 
 		// Output samples on I2C0 for the left accelerometer
@@ -485,8 +488,8 @@ int main(void)
 			}
 
 			Chip_I2C_SetMasterEventHandler(I2C0, Chip_I2C_EventHandler);
-			int tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
-			tmp = Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
+			Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_0, x_axis, 2);
+			Chip_I2C_MasterSend(I2C0, DAC_ADDRESS_1, y_axis, 2);
 		}
 
 	}
