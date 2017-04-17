@@ -44,7 +44,7 @@
 // in the speed that you can move it. This is fine, as it makes it
 #define RIGHT_HAND_X_THRESHOLD 	0x07FF	// 1.5V scaled for 12 bit DAC
 #define RIGHT_HAND_Y_THRESHOLD 	0x07FF	// 1.5V scaled for 12 bit DAC
-#define THRESH_VARIANCE			1200	//
+#define THRESH_VARIANCE			1300	//
 
 // Hystresis to stop stuttering at the turn-on threshold
 #define HYSTRESIS_UPPER_THRESHOLD 1000		// Turn on Threshold
@@ -177,8 +177,18 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 
 
 				// Keep a threshold range to make sure that you can keep the drone balanced.
-				if (RIGHT_HAND_X_THRESHOLD-THRESH_VARIANCE < xtemp && xtemp < RIGHT_HAND_X_THRESHOLD+THRESH_VARIANCE)
-					xtemp = RIGHT_HAND_X_THRESHOLD;
+				if (RIGHT_HAND_X_THRESHOLD-THRESH_VARIANCE < xtemp) {
+					uint16_t tmp = xtemp - RIGHT_HAND_X_THRESHOLD;
+					xtemp -= tmp;
+					tmp /= 4;
+					xtemp += tmp;
+				}
+				else if (xtemp < RIGHT_HAND_X_THRESHOLD+THRESH_VARIANCE) {
+					uint16_t tmp = RIGHT_HAND_X_THRESHOLD - xtemp;
+					xtemp -= tmp;
+					tmp /= 4;
+					xtemp += tmp;
+				}
 			}
 
 			// Detect integer overflow and don't let it loop around to 0
@@ -264,13 +274,19 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 				// Average the ring buffer;
 				ytemp = y_right_sum / RINGBUFFSIZE;
 
-				// Add 500 to right hand because it wasn't scaled properly
-				// after looking at Oscope
-				ytemp += 500;
-
 				// Keep a threshold range to make sure that you can keep the drone balanced.
-				if (RIGHT_HAND_Y_THRESHOLD-THRESH_VARIANCE < ytemp && ytemp < RIGHT_HAND_Y_THRESHOLD+THRESH_VARIANCE)
-					ytemp = RIGHT_HAND_Y_THRESHOLD;
+				if (RIGHT_HAND_Y_THRESHOLD-THRESH_VARIANCE < ytemp) {
+					uint16_t tmp = ytemp - RIGHT_HAND_Y_THRESHOLD;
+					ytemp -= tmp;
+					tmp /= 4;
+					ytemp += tmp;
+				}
+				else if (ytemp < RIGHT_HAND_Y_THRESHOLD+THRESH_VARIANCE) {
+					uint16_t tmp = RIGHT_HAND_Y_THRESHOLD - ytemp;
+					ytemp -= tmp;
+					tmp /= 4;
+					ytemp += tmp;
+				}
 			}
 
 			// Detect integer overflow and don't let it loop around to 0
