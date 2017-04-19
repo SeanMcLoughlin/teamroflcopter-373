@@ -177,17 +177,18 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 
 
 				// Keep a threshold range to make sure that you can keep the drone balanced.
-				if (RIGHT_HAND_X_THRESHOLD-THRESH_VARIANCE < xtemp) {
-					uint16_t tmp = xtemp - RIGHT_HAND_X_THRESHOLD;
-					xtemp -= tmp;
-					tmp /= 4;
-					xtemp += tmp;
-				}
-				else if (xtemp < RIGHT_HAND_X_THRESHOLD+THRESH_VARIANCE) {
-					uint16_t tmp = RIGHT_HAND_X_THRESHOLD - xtemp;
-					xtemp -= tmp;
-					tmp /= 4;
-					xtemp += tmp;
+				if ((RIGHT_HAND_X_THRESHOLD+THRESH_VARIANCE > xtemp) &&(RIGHT_HAND_X_THRESHOLD-THRESH_VARIANCE < xtemp)){
+					if (xtemp>RIGHT_HAND_X_THRESHOLD)
+					{
+						uint16_t tmp = xtemp - RIGHT_HAND_X_THRESHOLD;
+						tmp /= 4;
+						xtemp = RIGHT_HAND_X_THRESHOLD+tmp;
+					}
+					else {
+						uint16_t tmp = RIGHT_HAND_X_THRESHOLD - xtemp;
+						tmp /= 4;
+						xtemp = RIGHT_HAND_X_THRESHOLD-tmp;
+					}
 				}
 			}
 
@@ -274,18 +275,18 @@ void getADCSample(uint8_t* data, uint8_t sample, uint64_t address) {
 				// Average the ring buffer;
 				ytemp = y_right_sum / RINGBUFFSIZE;
 
-				// Keep a threshold range to make sure that you can keep the drone balanced.
-				if (RIGHT_HAND_Y_THRESHOLD-THRESH_VARIANCE < ytemp) {
-					uint16_t tmp = ytemp - RIGHT_HAND_Y_THRESHOLD;
-					ytemp -= tmp;
-					tmp /= 4;
-					ytemp += tmp;
-				}
-				else if (ytemp < RIGHT_HAND_Y_THRESHOLD+THRESH_VARIANCE) {
-					uint16_t tmp = RIGHT_HAND_Y_THRESHOLD - ytemp;
-					ytemp -= tmp;
-					tmp /= 4;
-					ytemp += tmp;
+				if ((RIGHT_HAND_Y_THRESHOLD+THRESH_VARIANCE > ytemp) &&(RIGHT_HAND_Y_THRESHOLD-THRESH_VARIANCE < ytemp)){
+					if (ytemp>RIGHT_HAND_Y_THRESHOLD)
+					{
+						uint16_t tmp = ytemp - RIGHT_HAND_Y_THRESHOLD;
+						tmp /= 4;
+						ytemp = RIGHT_HAND_Y_THRESHOLD+tmp;
+					}
+					else {
+						uint16_t tmp = RIGHT_HAND_Y_THRESHOLD - ytemp;
+						tmp /= 4;
+						ytemp = RIGHT_HAND_Y_THRESHOLD-tmp;
+					}
 				}
 			}
 
